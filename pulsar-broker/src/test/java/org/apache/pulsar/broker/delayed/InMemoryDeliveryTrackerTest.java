@@ -33,6 +33,12 @@ import io.netty.util.TimerTask;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import java.lang.reflect.Method;
 import java.time.Clock;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.NavigableMap;
 import java.util.Set;
 import java.util.TreeMap;
@@ -274,4 +280,100 @@ public class InMemoryDeliveryTrackerTest extends AbstractDeliveryTrackerTest {
         tracker.close();
     }
 
+    @Test(dataProvider = "delayedTracker")
+    public void testRaceConditionInUpdateTimer(InMemoryDelayedDeliveryTracker tracker) throws Exception {
+        final int numThreads = 15;
+        final int operationsPerThread = 2000;
+        final CountDownLatch startLatch = new CountDownLatch(1);
+        final CountDownLatch doneLatch = new CountDownLatch(numThreads);
+        final AtomicInteger errors = new AtomicInteger(0);
+        final AtomicReference<Exception> firstException = new AtomicReference<>();
+
+        @Cleanup("shutdown")
+        ExecutorService executorService = Executors.newFixedThreadPool(32);
+
+        for (int i = 0; i < numThreads / 4; i++) {
+            executorService.submit(() -> {
+                try {
+                    startLatch.await();
+                    for (int j = 0; j < operationsPerThread; j++) {
+                        tracker.getNumberOfDelayedMessages();
+                        Thread.sleep(1);
+                    }
+                } catch (Exception e) {
+                    errors.incrementAndGet();
+                    firstException.compareAndSet(null, e);
+                    e.printStackTrace();
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        for (int i = numThreads / 4; i < numThreads; i++) {
+            executorService.submit(() -> {
+                try {
+                    startLatch.await();
+                    for (int j = 0; j < operationsPerThread; j++) {
+                        tracker.addMessage(1, 1, 10);
+                        Thread.sleep(1);
+                    }
+                } catch (Exception e) {
+                    errors.incrementAndGet();
+                    firstException.compareAndSet(null, e);
+                    e.printStackTrace();
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        for (int i = numThreads / 4; i < numThreads; i++) {
+            executorService.submit(() -> {
+                try {
+                    startLatch.await();
+                    for (int j = 0; j < operationsPerThread; j++) {
+                        tracker.clear();
+                        Thread.sleep(1);
+                    }
+                } catch (Exception e) {
+                    errors.incrementAndGet();
+                    firstException.compareAndSet(null, e);
+                    e.printStackTrace();
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        for (int i = numThreads / 4; i < numThreads; i++) {
+            executorService.submit(() -> {
+                try {
+                    startLatch.await();
+                    for (int j = 0; j < operationsPerThread; j++) {
+                        tracker.getScheduledMessages(1);
+                        Thread.sleep(1);
+                    }
+                } catch (Exception e) {
+                    errors.incrementAndGet();
+                    firstException.compareAndSet(null, e);
+                    e.printStackTrace();
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        startLatch.countDown();
+        assertTrue(doneLatch.await(30, TimeUnit.SECONDS), "Test should complete within 30 seconds");
+
+        if (errors.get() > 0) {
+            Exception exception = firstException.get();
+            if (exception != null) {
+                System.err.println("First exception caught: " + exception.getMessage());
+                exception.printStackTrace();
+            }
+        }
+        assertEquals(errors.get(), 0, "No exceptions should occur during concurrent operations");
+    }
 }
