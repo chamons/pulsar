@@ -200,6 +200,7 @@ public class PersistentDispatcherMultipleConsumersTest extends SharedPulsarBaseT
             .setPublishTime(System.currentTimeMillis())
             .setDeliverAtTime(deliverAt);
 
+        @Cleanup("shutdown")
         ExecutorService executorService = Executors.newFixedThreadPool(32);
 
         // Start clear message thread
