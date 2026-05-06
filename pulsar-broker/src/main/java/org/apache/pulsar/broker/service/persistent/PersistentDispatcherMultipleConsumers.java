@@ -1378,10 +1378,8 @@ public class PersistentDispatcherMultipleConsumers extends AbstractPersistentDis
     }
 
     @Override
-    public long getNumberOfDelayedMessages() {
-        synchronized (this) {
-            return delayedDeliveryTracker.map(DelayedDeliveryTracker::getNumberOfDelayedMessages).orElse(0L);
-        }
+    public synchronized long getNumberOfDelayedMessages() {
+        return delayedDeliveryTracker.map(DelayedDeliveryTracker::getNumberOfDelayedMessages).orElse(0L);
     }
 
     @Override
